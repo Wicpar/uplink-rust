@@ -1,6 +1,7 @@
 extern crate bindgen;
 
 use std::{env, fs};
+use std::fmt::format;
 use std::path::PathBuf;
 use std::process::Command;
 use fs_extra::dir::CopyOptions;
@@ -8,8 +9,10 @@ use fs_extra::dir::CopyOptions;
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not defined"));
 
-    // Directory containing uplink-c project source
-    let uplink_c_src = PathBuf::from("uplink-c");
+    // Directory containing uplink-c project for building
+    let uplink_c_dir = out_dir.join("uplink-c");
+    // Copy project to OUT_DIR for building
+    fs_extra::copy_items(&[&"uplink-c"], &out_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy uplink-c directory.");
 
     // Don't compile the uplink-c libraries when building the docs for not requiring Go to be
     // installed in the Docker image for building them used by docs.rs
@@ -23,53 +26,22 @@ fn main() {
         // parent tree directory and with the same depth.
         Command::new("make")
             .arg("build")
-            .current_dir(&uplink_c_src)
+            .current_dir(&uplink_c_dir)
             .status()
             .expect("Failed to run make command from build.rs.");
     }
 
-    // Directory containing uplink-c project for building
-    let uplink_c_dir = out_dir.join("uplink-c");
-    // Copy project to OUT_DIR for building
-    let _ = fs::create_dir_all(&uplink_c_dir);
-    fs_extra::copy_items(&[&uplink_c_src], &out_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy uplink-c directory.");
-    // Command::new("cp")
-    //     .args([
-    //         "-R",
-    //         &uplink_c_src.to_string_lossy(),
-    //         &uplink_c_dir.to_string_lossy(),
-    //     ])
-    //     .status()
-    //     .expect("Failed to copy uplink-c directory.");
-
     let build_dir = uplink_c_dir.join(".build");
     if env::var("DOCS_RS").is_ok() {
         // Use the precompiled uplink-c libraries for building the docs by docs.rs.
-        let _ = fs::create_dir_all(&build_dir);
         fs_extra::copy_items(&[".docs-rs"], &build_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy docs-rs precompiled uplink-c lib binaries");
-        // Command::new("cp")
-        //     .args([
-        //         "-R",
-        //         &PathBuf::from(".docs-rs").to_string_lossy(),
-        //         &uplink_c_dir.join(".build").to_string_lossy(),
-        //     ])
-        //     .status()
-        //     .expect("Failed to copy docs-rs precompiled uplink-c lib binaries");
-    } else {
-        // Delete the generated build files for avoiding `cargo publish` to complain about modifying
-        // things outside of the OUT_DIR.
-        fs_extra::remove_items(&[&build_dir]).expect("Failed to delete  uplink-c/.build directory.");
-        // Command::new("rm")
-        //     .args(["-r", &uplink_c_src.join(".build").to_string_lossy()])
-        //     .status()
-        //     .expect("Failed to delete  uplink-c/.build directory.");
     }
 
     // Directory containing uplink-c build
     let uplink_c_build = uplink_c_dir.join(".build");
 
     // Header file with complete API interface
-    let uplink_c_header = uplink_c_build.join("uplink").join("uplink.h");
+    let uplink_c_header = uplink_c_build.join("uplink.h");
 
     // Link (statically) to uplink-c library during build
     println!("cargo:rustc-link-lib=static=uplink");
@@ -115,6 +87,8 @@ fn main() {
         .header(
             uplink_c_header.to_string_lossy(),
         )
+        // find the headers in
+        .clang_arg(format!("-I{}", uplink_c_dir.to_string_lossy()))
         // Also make headers included by main header dependencies of the build
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         // Generate bindings
