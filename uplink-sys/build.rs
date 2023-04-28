@@ -11,6 +11,14 @@ fn main() {
 
     // Directory containing uplink-c project for building
     let uplink_c_dir = out_dir.join("uplink-c");
+
+    // Directory containing uplink-c build
+    let uplink_c_build = uplink_c_dir.join(".build");
+
+    // Header file with complete API interface
+    let uplink_c_header_dir = uplink_c_build.join("uplink");
+    let uplink_c_header = uplink_c_header_dir.join("uplink.h");
+
     // Copy project to OUT_DIR for building
     fs_extra::copy_items(&[&"uplink-c"], &out_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy uplink-c directory.");
 
@@ -24,11 +32,24 @@ fn main() {
         // Copying and building from a copy it doesn't work because it's a git submodule, hence it uses
         // a relative path to the superproject unless that the destination path is under the same
         // parent tree directory and with the same depth.
-        Command::new("make")
-            .arg("build")
-            .current_dir(&uplink_c_dir)
-            .status()
-            .expect("Failed to run make command from build.rs.");
+        if cfg!(target_os = "windows") {
+            for (shared, out) in [("c-shared", ".build/uplink.dll"), ("c-archive", ".build/uplink.lib")] {
+                Command::new("go")
+                    .args(["build", "-ldflags=-s -w", "-buildmode", shared, "-o", out, "."])
+                    .current_dir(&uplink_c_dir)
+                    .status()
+                    .expect("Failed to run make command from build.rs.");
+            }
+            fs::create_dir_all(&uplink_c_header_dir).expect("Could not create header dir.");
+            fs_extra::move_items(&[uplink_c_build.join("uplink.h")], &uplink_c_header_dir, &CopyOptions::new().overwrite(true)).expect("Failed to move uplink header.");
+            fs_extra::copy_items(&[uplink_c_dir.join("uplink_definitions.h"), uplink_c_dir.join("uplink_compat.h")], &uplink_c_header_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy over uplink_definitions and uplink_compat headers.");
+        } else {
+            Command::new("make")
+                .arg("build")
+                .current_dir(&uplink_c_dir)
+                .status()
+                .expect("Failed to run make command from build.rs.");
+        }
     }
 
     let build_dir = uplink_c_dir.join(".build");
@@ -37,11 +58,6 @@ fn main() {
         fs_extra::copy_items(&[".docs-rs"], &build_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy docs-rs precompiled uplink-c lib binaries");
     }
 
-    // Directory containing uplink-c build
-    let uplink_c_build = uplink_c_dir.join(".build");
-
-    // Header file with complete API interface
-    let uplink_c_header = uplink_c_build.join("uplink.h");
 
     // Link (statically) to uplink-c library during build
     println!("cargo:rustc-link-lib=static=uplink");
@@ -87,8 +103,6 @@ fn main() {
         .header(
             uplink_c_header.to_string_lossy(),
         )
-        // find the headers in
-        .clang_arg(format!("-I{}", uplink_c_dir.to_string_lossy()))
         // Also make headers included by main header dependencies of the build
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         // Generate bindings
