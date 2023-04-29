@@ -19,7 +19,11 @@ default-target = "x86_64-unknown-linux-gnu"
 targets = [] # Do not build the doc with any other target than the default.
 
 [build-dependencies]
-bindgen = "0.59.2"
+bindgen = "0.65.1"
 fs_extra = "1.3.0"
+build-target = "0.4.0"
 
 [dependencies]
+
+[features]
+precompiled = []

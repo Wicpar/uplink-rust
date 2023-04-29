@@ -16,3 +16,6 @@ uplink-sys = { path = "../uplink-sys", version = "0.5.2" }
 
 [dev-dependencies]
 rand = "0.8.5"
+
+[features]
+precompiled = ["uplink-sys/precompiled"]

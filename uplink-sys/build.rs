@@ -6,6 +6,35 @@ use std::path::PathBuf;
 use std::process::Command;
 use fs_extra::dir::CopyOptions;
 
+#[cfg(feature = "precompiled")]
+fn main() {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not defined"));
+
+    let target = build_target::target().expect("Could not detect target");
+
+    let path = PathBuf::from_iter(["precompiled", target.triple.as_ref()]);
+
+    fs::read_dir(&path).expect("No precompiled library for target triple");
+
+    fs_extra::copy_items(&[path.join("bindings.rs")], &out_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy over bindings.rs");
+
+    // Link (statically) to uplink-c library during build
+    println!("cargo:rustc-link-lib=static=uplink");
+
+    // Add precompiled directory to library search path
+    println!(
+        "cargo:rustc-link-search={}",
+        path.to_string_lossy()
+    );
+
+    // Link (statically) to uplink-c library during build
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-flags=-l framework=CoreFoundation -l framework=Security");
+    }
+}
+
+#[cfg(not(feature = "precompiled"))]
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not defined"));
 
@@ -32,27 +61,25 @@ fn main() {
         // Copying and building from a copy it doesn't work because it's a git submodule, hence it uses
         // a relative path to the superproject unless that the destination path is under the same
         // parent tree directory and with the same depth.
-        if cfg!(target_os = "windows") {
-            for (shared, out) in [("c-shared", ".build/uplink.dll"), ("c-archive", ".build/uplink.lib")] {
-                Command::new("go")
-                    .args(["build", "-ldflags=-s -w", "-buildmode", shared, "-o", out, "."])
-                    .current_dir(&uplink_c_dir)
-                    .status()
-                    .expect("Failed to run make command from build.rs.");
-            }
-            fs::create_dir_all(&uplink_c_header_dir).expect("Could not create header dir.");
-            fs_extra::move_items(&[uplink_c_build.join("uplink.h")], &uplink_c_header_dir, &CopyOptions::new().overwrite(true)).expect("Failed to move uplink header.");
-            fs_extra::copy_items(&[uplink_c_dir.join("uplink_definitions.h"), uplink_c_dir.join("uplink_compat.h")], &uplink_c_header_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy over uplink_definitions and uplink_compat headers.");
+        let targets = if cfg!(target_os = "windows") {
+            [("c-shared", ".build/uplink.dll"), ("c-archive", ".build/uplink.lib")]
         } else {
-            Command::new("make")
-                .arg("build")
+            [("c-shared", ".build/uplink.so"), ("c-archive", ".build/uplink.a")]
+        };
+        for (shared, out) in targets {
+            Command::new("go")
+                .args(["build", "-ldflags=-s -w", "-buildmode", shared, "-o", out, "."])
                 .current_dir(&uplink_c_dir)
                 .status()
                 .expect("Failed to run make command from build.rs.");
         }
+        fs::create_dir_all(&uplink_c_header_dir).expect("Could not create header dir.");
+        fs_extra::move_items(&[uplink_c_build.join("uplink.h")], &uplink_c_header_dir, &CopyOptions::new().overwrite(true)).expect("Failed to move uplink header.");
+        fs_extra::copy_items(&[uplink_c_dir.join("uplink_definitions.h"), uplink_c_dir.join("uplink_compat.h")], &uplink_c_header_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy over uplink_definitions and uplink_compat headers.");
     }
 
     let build_dir = uplink_c_dir.join(".build");
+
     if env::var("DOCS_RS").is_ok() {
         // Use the precompiled uplink-c libraries for building the docs by docs.rs.
         fs_extra::copy_items(&[".docs-rs"], &build_dir, &CopyOptions::new().overwrite(true)).expect("Failed to copy docs-rs precompiled uplink-c lib binaries");
